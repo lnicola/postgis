@@ -7,7 +7,7 @@ export CLANG_VER=`clang --version | perl -lne 'print $1 if /version (\d+)/'`
 echo "Clang major version is: $CLANG_VER"
 # Enable undefined behaviour sanitizer using traps
 CFLAGS_USAN="-g3 -O0 -mtune=generic -fno-omit-frame-pointer -fsanitize=address -fno-sanitize-recover"
-LDFLAGS_STD="-Wl,-Bsymbolic-functions -Wl,-z,relro"
+LDFLAGS_STD="-fsanitize=address -Wl,-Bsymbolic-functions -Wl,-z,relro"
 
 # Sanitizer options to continue avoid stopping the runs on leaks (expected on postgres binaries)
 export ASAN_OPTIONS=halt_on_error=false,leak_check_at_exit=false,exitcode=0
