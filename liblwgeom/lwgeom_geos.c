@@ -723,7 +723,7 @@ lwgeom_intersection_prec(const LWGEOM* geom1, const LWGEOM* geom2, double prec)
 		g3 = GEOSIntersection(g1, g2);
 	}
 
-	if (!g3) GEOS_FREE_AND_FAIL(g1);
+	if (!g3) GEOS_FREE_AND_FAIL(g1, g2);
 	GEOSSetSRID(g3, srid);
 
 	if (!(result = GEOS2LWGEOM(g3, is3d))) GEOS_FREE_AND_FAIL(g1, g2, g3);
@@ -1145,7 +1145,7 @@ lwgeom_buildarea(const LWGEOM* geom)
 	/* If no geometries are in result collection, return NULL */
 	if (GEOSGetNumGeometries(g3) == 0)
 	{
-		GEOS_FREE(g1);
+		GEOS_FREE(g1, g3);
 		return NULL;
 	}
 
@@ -1353,7 +1353,7 @@ lwgeom_offsetcurve(const LWGEOM* geom, double size, int quadsegs, int joinStyle,
 
 	if (lwgeom_dimension(geom) != 1)
 	{
-		lwerror("%s: input is not linear", __func__, lwtype_name(geom->type));
+		lwerror("%s: input is not linear (type %s)", __func__, lwtype_name(geom->type));
 		return NULL;
 	}
 

@@ -25,7 +25,6 @@
 #include "utils/syscache.h"
 
 #include "liblwgeom.h"
-#include "pgsql_compat.h"
 
 #if POSTGIS_PGSQL_VERSION > 150
 #include "varatt.h"
@@ -62,7 +61,7 @@ extern postgisConstants *POSTGIS_CONSTANTS;
 
 /* Infer the install location of postgis, and thus the namespace to use
  * when looking up the type name, and cache oids */
-void postgis_initialize_cache();
+void postgis_initialize_cache(void);
 
 /* Useful if postgis_initialize_cache() has been called before.
  * Otherwise it tries to do a bare lookup */
@@ -72,7 +71,7 @@ Oid postgis_oid(postgisType typ);
  * Note that it's length can be up to strlen(schema) + "." + strlen("spatial_ref_sys") + NULL, i.e: 80 bytes
  * Only useful if postgis_initialize_cache has been called before. Otherwise returns "spatial_ref_sys"
  */
-const char *postgis_spatial_ref_sys();
+const char *postgis_spatial_ref_sys(void);
 
 /****************************************************************************************/
 
@@ -84,18 +83,28 @@ const char *postgis_spatial_ref_sys();
 
 /****************************************************************************************/
 
-/* Install PosgreSQL handlers for liblwgeom use */
+/* Install PostgreSQL handlers for liblwgeom use */
 void pg_install_lwgeom_handlers(void);
 
 /* Argument handling macros */
 #define PG_GETARG_GSERIALIZED_P(varno) ((GSERIALIZED *)PG_DETOAST_DATUM(PG_GETARG_DATUM(varno)))
+
 #define PG_GETARG_GSERIALIZED_P_COPY(varno) ((GSERIALIZED *)PG_DETOAST_DATUM_COPY(PG_GETARG_DATUM(varno)))
+
 #define PG_GSERIALIZED_DATUM_NEEDS_DETOAST(datum) \
 	(VARATT_IS_EXTENDED((datum)) || VARATT_IS_EXTERNAL((datum)) || VARATT_IS_COMPRESSED((datum)))
+
+#if POSTGIS_PGSQL_VERSION >= 190
+#define PG_GETARG_GSERIALIZED_HEADER(varno) \
+	PG_GSERIALIZED_DATUM_NEEDS_DETOAST(DatumGetPointer(PG_GETARG_DATUM(varno))) \
+	? ((GSERIALIZED *)PG_DETOAST_DATUM_SLICE(PG_GETARG_DATUM(varno), 0, gserialized_max_header_size())) \
+	: ((GSERIALIZED *)(PG_GETARG_POINTER(varno)))
+#else
 #define PG_GETARG_GSERIALIZED_HEADER(varno) \
 	PG_GSERIALIZED_DATUM_NEEDS_DETOAST(PG_GETARG_DATUM(varno)) \
 	? ((GSERIALIZED *)PG_DETOAST_DATUM_SLICE(PG_GETARG_DATUM(varno), 0, gserialized_max_header_size())) \
 	: ((GSERIALIZED *)(PG_GETARG_DATUM(varno)))
+#endif
 
 /* Debugging macros */
 #if POSTGIS_DEBUG_LEVEL > 0
@@ -252,9 +261,9 @@ Datum LWGEOM_getBBOX(PG_FUNCTION_ARGS);
 Datum LWGEOM_addBBOX(PG_FUNCTION_ARGS);
 Datum LWGEOM_dropBBOX(PG_FUNCTION_ARGS);
 
-void lwpgerror(const char *fmt, ...);
-void lwpgnotice(const char *fmt, ...);
-void lwpgwarning(const char *fmt, ...);
+void lwpgerror(const char *fmt, ...) __attribute (( format(printf, 1, 2) ));
+void lwpgnotice(const char *fmt, ...) __attribute (( format(printf, 1, 2) ));
+void lwpgwarning(const char *fmt, ...) __attribute (( format(printf, 1, 2) ));
 
 Datum CallerFInfoFunctionCall3(PGFunction func, FmgrInfo *flinfo, Oid collation, Datum arg1, Datum arg2, Datum arg3);
 

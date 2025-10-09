@@ -28,7 +28,7 @@
 --
 -- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 --
--- This file will be used to drop obseleted objects.
+-- This file will be used to drop obsoleted objects.
 -- It will be only used for upgrades.
 -- It will be loaded _after_ the objects upgrade statements, so
 -- that objects previously dependent on these objects have a chance
@@ -134,8 +134,6 @@ SELECT _postgis_drop_function_by_identity('st_approxquantile', 'rastertable text
 SELECT _postgis_drop_function_by_identity('st_approxquantile', 'rastertable text, rastercolumn text, sample_percent double precision, quantile double precision','3.0');
 SELECT _postgis_drop_function_by_identity('st_approxquantile', 'rastertable text, rastercolumn text, exclude_nodata_value boolean, quantile double precision','3.0');
 SELECT _postgis_drop_function_by_identity('st_approxquantile', 'rastertable text, rastercolumn text, quantile double precision','3.0');
-
-
 
 SELECT _postgis_drop_function_by_identity('st_value','rast raster, band integer, pt geometry, exclude_nodata_value boolean');
 

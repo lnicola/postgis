@@ -8,7 +8,6 @@
 *.res
 *.marks
 *.swp
-*.orig
 *.gcda
 *.gcno
 astyle
@@ -24,10 +23,16 @@ config.guess
 config.sub
 config.status
 configure
+.deps/
 doc/html/postgis-*
 doc/images
 doc/html/images/generator
 doc/html/images/Makefile
+regression.out
+raster/test/regress/tests.mk
+regress/core/tests.mk
+sfcgal/regress/tests.mk
+
 
 # PNG images under doc/html/images
 # should be either symlinks or generated
@@ -56,6 +61,7 @@ doc/raster_comments.sql
 doc/postgis_gardentest_*.sql
 doc/raster_gardentest_*.sql
 doc/sfcgal_gardentest_*.sql
+doc/topology_gardentest_*.sql
 doc/tiger_geocoder_comments.sql
 doc/topology_comments.sql
 extensions/Makefile
@@ -178,6 +184,7 @@ regress/sfcgal/Makefile
 regress/postgis.sql
 regress/postgis_garden_result.txt
 regress/raster_garden_result.txt
+regress/topology_garden_result.txt
 sfcgal/Makefile
 sfcgal/regress/Makefile
 sfcgal/regress/tests.mk
@@ -190,8 +197,9 @@ topology/Makefile
 topology/test/Makefile
 topology/test/load_topology-4326.sql
 topology/test/load_topology.sql
+topology/test/load_large_topology-4326.sql
+topology/test/load_large_topology.sql
 topology/test/topo_predicates.sql
-topology/test/regress/topogeo_addlinestring_expected
 topology/topology_after_upgrade.sql
 topology/topology_before_upgrade.sql
 topology/topology.sql
@@ -220,3 +228,10 @@ deps/Makefile
 deps/wagyu/Makefile
 deps/ryu/Makefile
 deps/flatgeobuf/Makefile
+
+# Dump
+**/*Dump.xml
+**/*.core
+
+# MacOS
+.DS_Store

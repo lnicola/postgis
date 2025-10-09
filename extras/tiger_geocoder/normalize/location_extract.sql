@@ -1,7 +1,7 @@
 -- location_extract(streetAddressString, stateAbbreviation)
 -- This function extracts a location name from the end of the given string.
 -- The first attempt is to find an exact match against the place_lookup
--- table.  If this fails, a word-by-word soundex match is tryed against the
+-- table.  If this fails, a word-by-word soundex match is tried against the
 -- same table.  If multiple candidates are found, the one with the smallest
 -- levenshtein distance from the given string is assumed the correct one.
 -- If no match is found against the place_lookup table, the same tests are
@@ -47,21 +47,21 @@ BEGIN
     stmt := ' SELECT'
          || '   1,'
          || '   name,'
-         || '   levenshtein_ignore_case(' || quote_literal(tempString) || ',name) as rating,'
+         || '   tiger.levenshtein_ignore_case(' || quote_literal(tempString) || ',name) as rating,'
          || '   length(name) as len'
          || ' FROM place'
          || ' WHERE ' || CASE WHEN stateAbbrev IS NOT NULL THEN 'statefp = ' || quote_literal(lstate) || ' AND ' ELSE '' END
-         || '   soundex(' || quote_literal(tempString) || ') = soundex(name)'
-         || '   AND levenshtein_ignore_case(' || quote_literal(tempString) || ',name) <= 2 '
+         || '   @extschema:fuzzystrmatch@.soundex(' || quote_literal(tempString) || ') = @extschema:fuzzystrmatch@.soundex(name)'
+         || '   AND tiger.levenshtein_ignore_case(' || quote_literal(tempString) || ',name) <= 2 '
          || ' UNION ALL SELECT'
          || '   2,'
          || '   name,'
-         || '   levenshtein_ignore_case(' || quote_literal(tempString) || ',name) as rating,'
+         || '   tiger.levenshtein_ignore_case(' || quote_literal(tempString) || ',name) as rating,'
          || '   length(name) as len'
          || ' FROM cousub'
          || ' WHERE ' || CASE WHEN stateAbbrev IS NOT NULL THEN 'statefp = ' || quote_literal(lstate) || ' AND ' ELSE '' END
-         || '   soundex(' || quote_literal(tempString) || ') = soundex(name)'
-         || '   AND levenshtein_ignore_case(' || quote_literal(tempString) || ',name) <= 2 '
+         || '   @extschema:fuzzystrmatch@.soundex(' || quote_literal(tempString) || ') = @extschema:fuzzystrmatch@.soundex(name)'
+         || '   AND tiger.levenshtein_ignore_case(' || quote_literal(tempString) || ',name) <= 2 '
          || ' ORDER BY '
          || '   3 ASC, 1 ASC, 4 DESC'
          || ' LIMIT 1;'

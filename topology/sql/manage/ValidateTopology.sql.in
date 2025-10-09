@@ -14,27 +14,34 @@
 --
 -- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+-- #define POSTGIS_TOPOLOGY_DEBUG 1
+
 --
 -- Type returned by ValidateTopology
 --
 -- Availability: 1.1.0
 --
+-- Changed: 3.6.0 uses bigint for ids
+-- Replaces validatetopology_returntype(varchar, integer, integer) deprecated in 3.6.0
 CREATE TYPE topology.ValidateTopology_ReturnType AS (
   error varchar,
-  id1 integer,
-  id2 integer
+  id1 bigint,
+  id2 bigint
 );
 
 --{
--- Return the exterior ring of a topology face
+-- Return the outermost ring of a topology face
 --
---
-CREATE OR REPLACE FUNCTION topology._ValidateTopologyGetFaceShellMaximalEdgeRing(atopology varchar, aface int)
+-- Availability: 3.6.0
+-- Changed: 3.6.0 uses bigint for IDs
+-- Replaces _validatetopologygetfaceshellmaximaledgering(varchar, integer) deprecated in 3.6.0
+CREATE OR REPLACE FUNCTION topology._validatetopologygetfaceshellmaximaledgering(atopology varchar, aface bigint)
 RETURNS GEOMETRY AS
 $BODY$
 DECLARE
   sql TEXT;
   outsidePoint GEOMETRY;
+  leftmostEdge BIGINT;
   shell GEOMETRY;
 BEGIN
 
@@ -53,38 +60,46 @@ BEGIN
   );
   EXECUTE sql USING aface INTO outsidePoint;
 
+  RAISE NOTICE 'Outside point of face %: %', aface, ST_AsText(outsidePoint);
+
+  IF outsidePoint IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  sql := format(
+    $$
+      SELECT
+        CASE WHEN left_face = $1
+        THEN
+          edge_id
+        ELSE
+          -edge_id
+        END ring_id
+      FROM %1$I.edge
+      WHERE left_face = $1 or right_face = $1
+      ORDER BY
+        geom <-> $2
+      LIMIT 1
+    $$,
+    atopology
+  );
+  EXECUTE sql USING aface, outsidePoint INTO leftmostEdge;
+
+  RAISE NOTICE 'Leftmost edge of face %: %', aface, leftmostEdge;
+
+  IF leftmostEdge IS NULL THEN
+    RETURN NULL;
+  END IF;
+
   sql := format(
     $$
       WITH
-      outside_point AS (
-        SELECT ST_Translate(
-          ST_StartPoint( ST_BoundingDiagonal(mbr) ),
-          -1,
-          -1
-        )
-        FROM %1$I.face
-        WHERE face_id = $1
-      ),
-      leftmost_edge AS (
-        SELECT
-          CASE WHEN left_face = $1
-          THEN
-            edge_id
-          ELSE
-            -edge_id
-          END ring_id
-        FROM %1$I.edge
-        WHERE left_face = $1 or right_face = $1
-        ORDER BY
-          geom <-> $2
-        LIMIT 1
-      ),
       edgering AS (
         SELECT *
         FROM
           topology.GetRingEdges(
             %1$L,
-            (SELECT ring_id FROM leftmost_edge)
+            $1
           )
       )
       SELECT
@@ -102,9 +117,9 @@ BEGIN
     atopology
   );
 
-  --RAISE DEBUG 'SQL: %', sql;
+  RAISE DEBUG 'SQL: %', sql;
 
-  EXECUTE sql USING aface, outsidePoint
+  EXECUTE sql USING leftmostEdge
   INTO shell;
 
   -- TODO: check if the ring is not closed
@@ -116,13 +131,14 @@ END;
 $BODY$ LANGUAGE 'plpgsql' STABLE; --}
 
 -- Assumes search_path has topology schema first
---{
-CREATE OR REPLACE FUNCTION topology._ValidateTopologyGetRingEdges(starting_edge int)
-RETURNS int[]
+-- Changed: 3.6.0 uses bigint for IDs
+-- Replaces _validatetopologygetringedges(integer) deprecated in 3.6.0
+CREATE OR REPLACE FUNCTION topology._ValidateTopologyGetRingEdges(starting_edge bigint)
+RETURNS bigint[]
 AS
 $BODY$
 DECLARE
-  ret int[];
+  ret bigint[];
 BEGIN
   WITH RECURSIVE edgering AS (
     SELECT
@@ -159,7 +175,9 @@ END;
 $BODY$ LANGUAGE 'plpgsql';
 --}
 
-CREATE OR REPLACE FUNCTION topology._CheckEdgeLinking(curedge_edge_id INT, prevedge_edge_id INT, prevedge_next_left_edge INT, prevedge_next_right_edge INT)
+-- Changed: 3.6.0 uses bigint for IDs
+-- Replaces _checkedgelinking(integer, integer, integer, integer) deprecated in 3.6.0
+CREATE OR REPLACE FUNCTION topology._CheckEdgeLinking(curedge_edge_id BIGINT, prevedge_edge_id BIGINT, prevedge_next_left_edge BIGINT, prevedge_next_right_edge BIGINT)
 RETURNS topology.ValidateTopology_ReturnType
 AS
 $BODY$
@@ -213,14 +231,15 @@ LANGUAGE 'plpgsql' IMMUTABLE STRICT;
 --
 -- NOTE: assumes search_path was set before calling this function
 --
+-- Changed: 3.6.0 uses bigint for IDs
 CREATE OR REPLACE FUNCTION topology._ValidateTopologyEdgeLinking(bbox geometry DEFAULT NULL)
 RETURNS SETOF topology.ValidateTopology_ReturnType
-AS --{
+AS
 $BODY$
 DECLARE
   retrec topology.ValidateTopology_ReturnType;
   rec RECORD;
-  last_node_id int;
+  last_node_id bigint;
   last_node_first_edge RECORD;
   last_node_prev_edge RECORD;
 BEGIN
@@ -296,7 +315,7 @@ BEGIN
           RETURN NEXT retrec;
         END IF;
 #ifdef POSTGIS_TOPOLOGY_DEBUG
-        RAISE DEBUG 'Finished analisys of edge star around node %', last_node_id;
+        RAISE DEBUG 'Finished analysis of edge star around node %', last_node_id;
 #endif /* POSTGIS_TOPOLOGY_DEBUG */
       END IF;
 #ifdef POSTGIS_TOPOLOGY_DEBUG
@@ -338,7 +357,7 @@ BEGIN
       RETURN NEXT retrec;
     END IF;
 #ifdef POSTGIS_TOPOLOGY_DEBUG
-    RAISE DEBUG 'Finished analisys of edge star around node % (out of loop)', last_node_id;
+    RAISE DEBUG 'Finished analysis of edge star around node % (out of loop)', last_node_id;
 #endif /* POSTGIS_TOPOLOGY_DEBUG */
   END IF; --}
 
@@ -362,6 +381,7 @@ LANGUAGE 'plpgsql' VOLATILE;
 -- Creates a pg_temp.hole_check table
 -- Creates a pg_temp.shell_check table
 --
+-- Changed: 3.6.0 uses bigint for IDs
 CREATE OR REPLACE FUNCTION topology._ValidateTopologyRings(bbox geometry DEFAULT NULL)
 RETURNS SETOF topology.ValidateTopology_ReturnType
 AS --{
@@ -377,15 +397,15 @@ DECLARE
 BEGIN
 
   CREATE TEMP TABLE shell_check (
-    face_id int PRIMARY KEY,
+    face_id bigint PRIMARY KEY,
     ring_geom geometry
   );
 
   CREATE TEMP TABLE hole_check (
-    ring_id int,
+    ring_id bigint,
     hole_mbr geometry, -- point
     hole_point geometry, -- point
-    in_shell int
+    in_shell bigint
   );
 
   RAISE NOTICE 'Building edge rings';
@@ -487,20 +507,15 @@ BEGIN
 
     found_rings := found_rings + 1;
 
-#ifdef POSTGIS_TOPOLOGY_DEBUG
-    RAISE DEBUG 'Ring % - faces:[%]',
-      rec.ring_id,
-      array_to_string(rec.side_faces, ',')
-    ;
-#endif /* POSTGIS_TOPOLOGY_DEBUG */
-
     -- Check that there's a single face advertised
     IF array_upper(rec.side_faces,1) != 1
     THEN --{
 
 #ifdef POSTGIS_TOPOLOGY_DEBUG
-      RAISE DEBUG 'Side faces found on ring %: %', rec.ring_id,
-       rec.side_faces;
+    RAISE DEBUG 'Ring % - mixed side faces:[%]',
+      rec.ring_id,
+      array_to_string(rec.side_faces, ',')
+    ;
 #endif /* POSTGIS_TOPOLOGY_DEBUG */
       retrec.error = 'mixed face labeling in ring';
       retrec.id1 = rec.ring_id;
@@ -538,6 +553,14 @@ BEGIN
         is_shell := true;
       END IF;
     END IF;
+
+#ifdef POSTGIS_TOPOLOGY_DEBUG
+    RAISE DEBUG 'Ring % - side faces:[%] - %',
+      rec.ring_id,
+      array_to_string(rec.side_faces, ','),
+      CASE WHEN is_shell THEN 'shell (will end in shell_check)' ELSE 'hole' END
+    ;
+#endif /* POSTGIS_TOPOLOGY_DEBUG */
 
     IF is_shell THEN --{ It's a shell (CCW)
       -- Check that a single face is ever used
@@ -594,11 +617,10 @@ LANGUAGE 'plpgsql' VOLATILE;
 --  ValidateTopology(toponame, [bbox])
 --
 --  Return a Set of ValidateTopology_ReturnType containing
---  informations on all topology inconsistencies
+--  information on all topology inconsistencies
 --
 -- Availability: 1.0.0
 -- Changed: 3.2.0 - add bbox optional parameter
---
 CREATE OR REPLACE FUNCTION topology.ValidateTopology(toponame varchar, bbox geometry DEFAULT NULL)
   RETURNS setof topology.ValidateTopology_ReturnType
 AS
@@ -608,12 +630,12 @@ DECLARE
   rec RECORD;
   rec2 RECORD;
   affected_rows integer;
-  invalid_edges integer[];
-  invalid_faces integer[];
+  invalid_edges bigint[];
+  invalid_faces bigint[];
   has_invalid_edge_linking BOOLEAN := false;
   has_invalid_rings BOOLEAN := false;
   search_path_backup text;
-  containing_face integer;
+  containing_face bigint;
 BEGIN
 
   IF NOT EXISTS (
@@ -696,7 +718,7 @@ BEGIN
   -- Scan all edges
   RAISE NOTICE 'Checking for invalid or not-simple edges';
   FOR rec IN
-    SELECT e.geom, e.edge_id as id1, e.left_face, e.right_face
+    SELECT e.geom, e.edge_id::int8 as id1, e.left_face::int8, e.right_face::int8
     FROM edge e
     WHERE (
       bbox IS NULL
@@ -782,7 +804,7 @@ BEGIN
     RETURN NEXT retrec;
   END LOOP; --}
 
-  -- Check for edge start_node geometry mis-match
+  -- Check for edge start_node geometry mismatch
   -- TODO: move this in the first edge table scan
   RAISE NOTICE 'Checking for edges start_node mismatch';
   FOR rec IN
@@ -797,13 +819,13 @@ BEGIN
       OR e.geom && bbox
     )
   LOOP --{
-    retrec.error = 'edge start node geometry mis-match';
+    retrec.error = 'edge start node geometry mismatch';
     retrec.id1 = rec.id1;
     retrec.id2 = rec.id2;
     RETURN NEXT retrec;
   END LOOP; --}
 
-  -- Check for edge end_node geometry mis-match
+  -- Check for edge end_node geometry mismatch
   -- TODO: move this in the first edge table scan
   RAISE NOTICE 'Checking for edges end_node mismatch';
   FOR rec IN
@@ -818,7 +840,7 @@ BEGIN
       OR e.geom && bbox
     )
   LOOP --{
-    retrec.error = 'edge end node geometry mis-match';
+    retrec.error = 'edge end node geometry mismatch';
     retrec.id1 = rec.id1;
     retrec.id2 = rec.id2;
     RETURN NEXT retrec;
@@ -827,7 +849,7 @@ BEGIN
   -- Check for faces w/out edges
   RAISE NOTICE 'Checking for faces without edges';
   FOR rec IN
-    SELECT f.face_id as id1
+    SELECT f.face_id::int8 as id1
     FROM face f
     LEFT JOIN edge_data e ON (
       f.face_id = e.left_face OR
@@ -891,29 +913,47 @@ BEGIN
     f.face_id = sc.face_id
   ;
 
+#ifdef POSTGIS_TOPOLOGY_DEBUG
+  GET DIAGNOSTICS affected_rows = ROW_COUNT;
+  RAISE DEBUG 'Constructed geometries of % faces (found shells)',
+    affected_rows;
+#endif /* POSTGIS_TOPOLOGY_DEBUG */
+
   DROP TABLE pg_temp.shell_check;
 
+  --
+  -- Add to face_check any missing face whose mbr overlaps
+  -- the given one.
+  --
+  -- This is done to still be able to check MBR consistency
+  -- See https://trac.osgeo.org/postgis/ticket/5766#comment:6
+  --
+  INSERT INTO pg_temp.face_check
+  SELECT face_id,
+    CASE WHEN face_id = 0 THEN
+      NULL
+    ELSE
+      topology._ValidateTopologyGetFaceShellMaximalEdgeRing(toponame, face_id)
+    END as real_shell,
+    mbr
+  FROM face
+  WHERE ( bbox IS NULL OR mbr && bbox )
+  AND (
+    CASE WHEN invalid_faces IS NOT NULL THEN
+      NOT face_id = ANY(invalid_faces)
+    ELSE
+      TRUE
+    END
+  )
+  AND face_id NOT IN (
+    SELECT face_id FROM pg_temp.face_check
+  );
 
-  IF bbox IS NOT NULL
-  THEN --{
-    INSERT INTO pg_temp.face_check
-    SELECT face_id,
-      topology._ValidateTopologyGetFaceShellMaximalEdgeRing(toponame, face_id),
-      mbr
-    FROM face
-    WHERE mbr && bbox
-    AND (
-      CASE WHEN invalid_faces IS NOT NULL THEN
-        NOT face_id = ANY(invalid_faces)
-      ELSE
-        TRUE
-      END
-    )
-    AND face_id NOT IN (
-      SELECT face_id FROM pg_temp.face_check
-    )
-    ;
-  END IF; --}
+#ifdef POSTGIS_TOPOLOGY_DEBUG
+  GET DIAGNOSTICS affected_rows = ROW_COUNT;
+  RAISE DEBUG 'Added % missing faces in face_check table',
+    affected_rows;
+#endif /* POSTGIS_TOPOLOGY_DEBUG */
 
   -- Build a gist index on geom
   CREATE INDEX ON face_check USING gist (shell);
@@ -931,26 +971,53 @@ BEGIN
 
     affected_rows := affected_rows + 1;
 
-    IF rec.shell IS NULL OR ST_IsEmpty(rec.shell)
-    THEN
-      -- Face missing !
-      retrec.error := 'face has no rings';
-      retrec.id1 := rec.face_id;
-      retrec.id2 := NULL;
-      RETURN NEXT retrec;
-    END IF;
+    IF rec.face_id != 0 THEN -- {
 
-    IF NOT ST_Equals(rec.mbr, ST_Envelope(rec.shell))
-    THEN
+      -- Real face need have rings and matching MBR
+
+      IF rec.shell IS NULL OR ST_IsEmpty(rec.shell)
+      THEN
+        -- Face missing !
+        retrec.error := 'face has no rings';
+        retrec.id1 := rec.face_id;
+        retrec.id2 := NULL;
+        RETURN NEXT retrec;
+      END IF;
+
+      IF NOT ST_Equals(rec.mbr, ST_Envelope(rec.shell))
+      THEN
 #ifdef POSTGIS_TOPOLOGY_DEBUG
-      RAISE DEBUG 'MBR expected:% obtained:%', ST_AsEWKT(ST_Envelope(rec.shell)), ST_AsEWKT(ST_Envelope(rec.mbr));
+        RAISE DEBUG 'MBR expected:% obtained:%', ST_AsEWKT(ST_Envelope(rec.shell)), ST_AsEWKT(ST_Envelope(rec.mbr));
 #endif /* POSTGIS_TOPOLOGY_DEBUG */
-      -- Inconsistent MBR!
-      retrec.error := 'face has wrong mbr';
-      retrec.id1 := rec.face_id;
-      retrec.id2 := NULL;
-      RETURN NEXT retrec;
-    END IF;
+        -- Inconsistent MBR!
+        retrec.error := 'face has wrong mbr';
+        retrec.id1 := rec.face_id;
+        retrec.id2 := NULL;
+        RETURN NEXT retrec;
+      END IF;
+
+    ELSE --}{
+
+      -- Universal face need have no shell rings and NULL MBR
+
+      IF rec.shell IS NOT NULL OR NOT ST_IsEmpty(rec.shell)
+      THEN
+        retrec.error := 'universal face has shell rings';
+        retrec.id1 := rec.face_id;
+        retrec.id2 := NULL;
+        RETURN NEXT retrec;
+      END IF;
+
+      IF rec.mbr IS NOT NULL
+      THEN
+        -- TODO: make the message more specific about universal face ?
+        retrec.error := 'face has wrong mbr';
+        retrec.id1 := rec.face_id;
+        retrec.id2 := NULL;
+        RETURN NEXT retrec;
+      END IF;
+
+    END IF; --}
 
   END LOOP; --}
 

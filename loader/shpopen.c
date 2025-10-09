@@ -251,7 +251,7 @@ void SHPAPI_CALL SHPWriteHeader( SHPHandle psSHP )
     panSHX = STATIC_CAST(int32 *, malloc(sizeof(int32) * 2 * psSHP->nRecords));
     if( panSHX == SHPLIB_NULLPTR )
     {
-        psSHP->sHooks.Error( "Failure allocatin panSHX" );
+        psSHP->sHooks.Error( "Failure allocating panSHX" );
         return;
     }
 
@@ -366,7 +366,9 @@ SHPOpenLL( const char * pszLayer, const char * pszAccess, SAHooks *psHooks )
 /* -------------------------------------------------------------------- */
 /*  Initialize the info structure.                  */
 /* -------------------------------------------------------------------- */
-    psSHP = STATIC_CAST(SHPHandle, calloc(sizeof(SHPInfo),1));
+    psSHP = STATIC_CAST(SHPHandle, calloc(1,sizeof(SHPInfo)));
+    if( psSHP == SHPLIB_NULLPTR )
+        return SHPLIB_NULLPTR;
 
     psSHP->bUpdated = FALSE;
     memcpy( &(psSHP->sHooks), psHooks, sizeof(SAHooks) );
@@ -377,6 +379,11 @@ SHPOpenLL( const char * pszLayer, const char * pszAccess, SAHooks *psHooks )
 /* -------------------------------------------------------------------- */
     nLenWithoutExtension = SHPGetLenWithoutExtension(pszLayer);
     pszFullname = STATIC_CAST(char *, malloc(nLenWithoutExtension + 5));
+    if( pszFullname == SHPLIB_NULLPTR )
+    {
+        free( psSHP );
+        return SHPLIB_NULLPTR;
+    }
     memcpy(pszFullname, pszLayer, nLenWithoutExtension);
     memcpy(pszFullname + nLenWithoutExtension, ".shp", 5);
     psSHP->fpSHP = psSHP->sHooks.FOpen(pszFullname, pszAccess );
@@ -493,7 +500,7 @@ SHPOpenLL( const char * pszLayer, const char * pszAccess, SAHooks *psHooks )
         return SHPLIB_NULLPTR;
     }
 
-    /* If a lot of records are advertized, check that the file is big enough */
+    /* If a lot of records are advertised, check that the file is big enough */
     /* to hold them */
     if( psSHP->nRecords >= 1024 * 1024 )
     {
@@ -746,6 +753,8 @@ SHPRestoreSHX ( const char * pszLayer, const char * pszAccess, SAHooks *psHooks 
 /* -------------------------------------------------------------------- */
     nLenWithoutExtension = SHPGetLenWithoutExtension(pszLayer);
     pszFullname = STATIC_CAST(char *, malloc(nLenWithoutExtension + 5));
+    if( pszFullname == SHPLIB_NULLPTR )
+        return FALSE;
     memcpy(pszFullname, pszLayer, nLenWithoutExtension);
     memcpy(pszFullname + nLenWithoutExtension, ".shp", 5);
     fpSHP = psHooks->FOpen(pszFullname, pszAccess );
@@ -1023,6 +1032,8 @@ SHPCreateLL( const char * pszLayer, int nShapeType, SAHooks *psHooks )
 /* -------------------------------------------------------------------- */
     nLenWithoutExtension = SHPGetLenWithoutExtension(pszLayer);
     pszFullname = STATIC_CAST(char *, malloc(nLenWithoutExtension + 5));
+    if( pszFullname == SHPLIB_NULLPTR )
+        return SHPLIB_NULLPTR;
     memcpy(pszFullname, pszLayer, nLenWithoutExtension);
     memcpy(pszFullname + nLenWithoutExtension, ".shp", 5);
     fpSHP = psHooks->FOpen(pszFullname, "wb" );
@@ -1248,7 +1259,7 @@ SHPCreateObject( int nSHPType, int nShapeId, int nParts,
         psObject->nParts = MAX(1,nParts);
 
         psObject->panPartStart = STATIC_CAST(int *,
-            calloc(sizeof(int), psObject->nParts));
+            calloc(psObject->nParts, sizeof(int)));
         psObject->panPartType = STATIC_CAST(int *,
             malloc(sizeof(int) * psObject->nParts));
 
@@ -1277,13 +1288,13 @@ SHPCreateObject( int nSHPType, int nShapeId, int nParts,
     {
         size_t nSize = sizeof(double) * nVertices;
         psObject->padfX = STATIC_CAST(double *, padfX ? malloc(nSize) :
-                                             calloc(sizeof(double),nVertices));
+                                             calloc(nVertices, sizeof(double)));
         psObject->padfY = STATIC_CAST(double *, padfY ? malloc(nSize) :
-                                             calloc(sizeof(double),nVertices));
+                                             calloc(nVertices, sizeof(double)));
         psObject->padfZ = STATIC_CAST(double *, padfZ && bHasZ ? malloc(nSize) :
-                                             calloc(sizeof(double),nVertices));
+                                             calloc(nVertices, sizeof(double)));
         psObject->padfM = STATIC_CAST(double *, padfM && bHasM ? malloc(nSize) :
-                                             calloc(sizeof(double),nVertices));
+                                             calloc(nVertices, sizeof(double)));
         if( padfX != SHPLIB_NULLPTR )
             memcpy(psObject->padfX, padfX, nSize);
         if( padfY != SHPLIB_NULLPTR )

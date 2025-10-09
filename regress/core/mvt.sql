@@ -507,7 +507,7 @@ FROM (
 -- Strings and text
 SELECT 'TA11', encode(ST_AsMVT(q, 'test', 4096, 'geom'), 'base64') FROM (
 	SELECT 'AbcDfg'::varchar AS cstring,
-	       'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus sed nulla augue. Pellentesque ut vulputate ex. Nunc et odio placerat, lacinia lectus sed, fermentum sapien. Sed massa velit, ullamcorper et est quis, congue rhoncus orci. Suspendisse in ante varius, convallis enim ut, fermentum amet.'::text as ctext,
+	       'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus sed nulla augue. Pellentesque ut vulputate ex. Nunc et odio placerat, lacinia lectus sed, fermentum sapien. Sed massa velit, ullamcorper et est quis, congue rhoncus orci. Suspendisse in ante varius, convallis enim ut, fermentum amet.'::text as ctext, -- # codespell:ignore
 	       ST_AsMVTGeom(ST_GeomFromText('POINT(25 17)'),
 		ST_MakeBox2D(ST_Point(0, 0), ST_Point(4096, 4096)), 4096, 0, false) AS geom
 ) AS q;
@@ -520,6 +520,7 @@ SELECT 'TA12', encode(ST_AsMVT(q, 'test', 4096, 'geom'), 'base64') FROM (
 	UNION
 	SELECT NULL AS c1, 2.0 AS c2, ST_AsMVTGeom(ST_GeomFromText('POINT(26 18)'),
 		ST_MakeBox2D(ST_Point(0, 0), ST_Point(4096, 4096)), 4096, 0, false) AS geom
+	ORDER BY c1
 ) AS q;
 
 SELECT 'TA13', encode(ST_AsMVT(q, 'test', 4096, 'geom'), 'base64') FROM (
@@ -527,6 +528,7 @@ SELECT 'TA13', encode(ST_AsMVT(q, 'test', 4096, 'geom'), 'base64') FROM (
 		ST_MakeBox2D(ST_Point(0, 0), ST_Point(4096, 4096)), 4096, 0, false) AS geom
 	UNION
 	SELECT 5 AS c1, 2.0 AS c2, null AS geom
+	ORDER BY c1
 ) AS q;
 
 -- Extra geometry as parameter (casted as string)

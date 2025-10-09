@@ -384,7 +384,6 @@ static void test_gdal_to_raster() {
 
 	gdds = rt_raster_to_gdal_mem(raster, NULL, NULL, NULL, 0, &gddrv, &destroy);
 	CU_ASSERT(gddrv != NULL);
-	CU_ASSERT_EQUAL(destroy, 0);
 	CU_ASSERT(gdds != NULL);
 	CU_ASSERT_EQUAL((uint32_t)GDALGetRasterXSize(gdds), width);
 	CU_ASSERT_EQUAL((uint32_t)GDALGetRasterYSize(gdds), height);
@@ -404,6 +403,10 @@ static void test_gdal_to_raster() {
 		}
 	}
 
+	if (destroy && gddrv) {
+		GDALDeregisterDriver(gddrv);
+		GDALDestroyDriver(gddrv);
+	}
 	GDALClose(gdds);
 	gdds = NULL;
 	gddrv = NULL;
@@ -430,7 +433,6 @@ static void test_gdal_to_raster() {
 
 	gdds = rt_raster_to_gdal_mem(raster, NULL, NULL, NULL, 0, &gddrv, &destroy);
 	CU_ASSERT(gddrv != NULL);
-	CU_ASSERT_EQUAL(destroy, 0);
 	CU_ASSERT(gdds != NULL);
 	CU_ASSERT_EQUAL((uint32_t)GDALGetRasterXSize(gdds), width);
 	CU_ASSERT_EQUAL((uint32_t)GDALGetRasterYSize(gdds), height);
@@ -441,14 +443,26 @@ static void test_gdal_to_raster() {
 
 	band = rt_raster_get_band(rast, 0);
 	CU_ASSERT(band != NULL);
+#if POSTGIS_GDAL_VERSION < 30700
 	CU_ASSERT_EQUAL(rt_band_get_pixtype(band), PT_16BSI);
-
+#else
+	CU_ASSERT_EQUAL(rt_band_get_pixtype(band), PT_8BSI);
+#endif
 	for (x = 0; x < width; x++) {
 		for (y = 0; y < height; y++) {
 			rtn = rt_band_get_pixel(band, x, y, &value, NULL);
- 			CU_ASSERT_EQUAL(rtn, ES_NONE);
+#if POSTGIS_GDAL_VERSION < 30700
 			CU_ASSERT_DOUBLE_EQUAL(value, values[x][y], 1.);
+			CU_ASSERT_DOUBLE_EQUAL(value, values[x][y], DBL_EPSILON);
+#else
+ 			CU_ASSERT_EQUAL(rtn, ES_NONE);
+			CU_ASSERT_DOUBLE_EQUAL(value, values[x][y], DBL_EPSILON);
+#endif
 		}
+	}
+	if (destroy && gddrv) {
+		GDALDeregisterDriver(gddrv);
+		GDALDestroyDriver(gddrv);
 	}
 
 	GDALClose(gdds);
@@ -519,6 +533,72 @@ static void test_gdal_warp() {
 	cu_free_raster(raster);
 }
 
+static void test_gdal_warp_preserves_data(void) {
+	const char *filename = POSTGIS_TOP_SRC_DIR "/raster/test/regress/loader/Projected.tif";
+
+	GDALDatasetH hDS_in = NULL;
+	rt_raster rast_in = NULL;
+	rt_raster rast_out = NULL;
+	int band_count_in, band_count_out, i;
+
+	// double scale_x = 0.0, scale_y = 0.0;
+	// double dim_x = 0.0, dim_y = 0.0;
+	// int width = 0, height = 0;
+	// double grid_xw = 0.0, grid_yw = 0.0;
+	// double skew_x = 0.0, skew_y = 0.0;
+
+	double max_err = 0.125;
+	GDALResampleAlg alg = GRA_NearestNeighbour;
+
+	const char *src_srs = "EPSG:4326";
+	const char *dst_srs = "EPSG:3857";
+
+	/* Handle to TIFF */
+	GDALAllRegister();
+	hDS_in = GDALOpen(filename, GA_ReadOnly);
+	CU_ASSERT(hDS_in != NULL);
+
+	/* Read TIFF into memory as rt_raster */
+	rast_in = rt_raster_from_gdal_dataset(hDS_in);
+	CU_ASSERT(rast_in != NULL);
+
+	/* Warp raster using default options */
+	rast_out = rt_raster_gdal_warp(rast_in,
+	    src_srs, dst_srs,
+	    NULL, NULL, // &scale_x, &scale_y,
+	    NULL, NULL, // &dim_x, &dim_y,
+	    NULL, NULL, // &width, &height,
+	    NULL, NULL, // &grid_xw, &grid_yw,
+	    NULL, NULL, // &skew_x, &skew_y,
+	    alg, max_err);
+	CU_ASSERT(rast_out != NULL);
+
+	band_count_in = rt_raster_get_num_bands(rast_in);
+	band_count_out = rt_raster_get_num_bands(rast_out);
+	CU_ASSERT_EQUAL(band_count_in, band_count_out);
+
+	for (i = 0; i < band_count_in; i++) {
+		double tolerance = 0.1;
+		rt_bandstats stats_in, stats_out;
+		rt_band band_in = rt_raster_get_band(rast_in, i);
+		rt_band band_out = rt_raster_get_band(rast_out, i);
+
+		CU_ASSERT(band_in != NULL);
+		CU_ASSERT(band_out != NULL);
+
+		stats_in = rt_band_get_summary_stats(band_in, 1, 1, 0, NULL, NULL, NULL);
+		stats_out = rt_band_get_summary_stats(band_out, 1, 1, 0, NULL, NULL, NULL);
+
+		CU_ASSERT_DOUBLE_EQUAL(stats_in->min, stats_out->min, fabs(stats_in->min) * tolerance);
+		CU_ASSERT_DOUBLE_EQUAL(stats_in->max, stats_out->max, fabs(stats_in->max) * tolerance);
+		CU_ASSERT_DOUBLE_EQUAL(stats_in->mean, stats_out->mean, fabs(stats_in->mean) * tolerance);
+	}
+
+	rt_raster_destroy(rast_in);
+	rt_raster_destroy(rast_out);
+	GDALClose(hDS_in);
+}
+
 /* register tests */
 void gdal_suite_setup(void);
 void gdal_suite_setup(void)
@@ -531,5 +611,6 @@ void gdal_suite_setup(void)
 	PG_ADD_TEST(suite, test_raster_to_gdal);
 	PG_ADD_TEST(suite, test_gdal_to_raster);
 	PG_ADD_TEST(suite, test_gdal_warp);
+	PG_ADD_TEST(suite, test_gdal_warp_preserves_data);
 }
 

@@ -1,5 +1,5 @@
--- This function take two arguements.  The first is the "given string" and
--- must not be null.  The second arguement is the "compare string" and may
+-- This function take two arguments.  The first is the "given string" and
+-- must not be null.  The second argument is the "compare string" and may
 -- or may not be null.  If the second string is null, the value returned is
 -- 3, otherwise it is the levenshtein difference between the two.
 -- Change 2010-10-18 Regina Obe - name verbose to var_verbose since get compile error in PostgreSQL 9.0
@@ -20,7 +20,7 @@ BEGIN
   END IF;
 
   IF $2 IS NOT NULL AND $2 != '' THEN
-    result := levenshtein_ignore_case(given_string, $2);
+    result := @extschema:fuzzystrmatch@.levenshtein_ignore_case_ignore_case(given_string, $2);
   END IF;
 
   RETURN result;

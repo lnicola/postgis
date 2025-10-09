@@ -32,6 +32,7 @@ check_enabled() {
   #cat ${TMPDIR}/enabled_tests
 
   find ${bd} -name '*_expected' |
+    sed 's|//|/|' |
     sed 's|_expected$||' > ${TMPDIR}/available_tests
 
   #cat ${TMPDIR}/available_tests
@@ -83,7 +84,7 @@ check_enabled sfcgal/regress/tests.mk.in
 err=$(($err+$?))
 check_enabled regress/core/tests.mk.in
 err=$(($err+$?))
-check_enabled raster/test/regress/tests.mk
+check_enabled raster/test/regress/tests.mk.in
 err=$(($err+$?))
 
 exit $err

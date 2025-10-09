@@ -416,10 +416,17 @@ DBFOpenLL( const char * pszFilename, const char * pszAccess, SAHooks *psHooks )
 /* -------------------------------------------------------------------- */
     nLenWithoutExtension = DBFGetLenWithoutExtension(pszFilename);
     pszFullname = STATIC_CAST(char *, malloc(nLenWithoutExtension + 5));
+    if( pszFullname == SHPLIB_NULLPTR )
+        return SHPLIB_NULLPTR;
     memcpy(pszFullname, pszFilename, nLenWithoutExtension);
     memcpy(pszFullname + nLenWithoutExtension, ".dbf", 5);
 
     psDBF = STATIC_CAST(DBFHandle, calloc( 1, sizeof(DBFInfo) ));
+    if( psDBF == SHPLIB_NULLPTR )
+    {
+        free( pszFullname );
+        return SHPLIB_NULLPTR;
+    }
     psDBF->fp = psHooks->FOpen( pszFullname, pszAccess );
     memcpy( &(psDBF->sHooks), psHooks, sizeof(SAHooks) );
 
@@ -692,6 +699,8 @@ DBFCreateLL( const char * pszFilename, const char * pszCodePage, SAHooks *psHook
 /* -------------------------------------------------------------------- */
     nLenWithoutExtension = DBFGetLenWithoutExtension(pszFilename);
     pszFullname = STATIC_CAST(char *, malloc(nLenWithoutExtension + 5));
+    if( pszFullname == SHPLIB_NULLPTR )
+        return SHPLIB_NULLPTR;
     memcpy(pszFullname, pszFilename, nLenWithoutExtension);
     memcpy(pszFullname + nLenWithoutExtension, ".dbf", 5);
 
@@ -1966,12 +1975,23 @@ DBFReorderFields( DBFHandle psDBF, int* panMap )
         return FALSE;
 
     /* a simple malloc() would be enough, but calloc() helps clang static analyzer */
-    panFieldOffsetNew = STATIC_CAST(int *, calloc(sizeof(int), psDBF->nFields));
-    panFieldSizeNew = STATIC_CAST(int *, calloc(sizeof(int),  psDBF->nFields));
-    panFieldDecimalsNew = STATIC_CAST(int *, calloc(sizeof(int), psDBF->nFields));
-    pachFieldTypeNew = STATIC_CAST(char *, calloc(sizeof(char), psDBF->nFields));
-    pszHeaderNew = STATIC_CAST(char*, malloc(sizeof(char) * XBASE_FLDHDR_SZ *
-                                  psDBF->nFields));
+    panFieldOffsetNew = STATIC_CAST(int *, calloc(psDBF->nFields, sizeof(int)));
+    panFieldSizeNew = STATIC_CAST(int *, calloc(psDBF->nFields, sizeof(int)));
+    panFieldDecimalsNew = STATIC_CAST(int *, calloc(psDBF->nFields, sizeof(int)));
+    pachFieldTypeNew = STATIC_CAST(char *, calloc(psDBF->nFields, sizeof(char)));
+    pszHeaderNew = STATIC_CAST(char*, malloc(sizeof(char) * XBASE_FLDHDR_SZ * psDBF->nFields));
+
+    if( panFieldOffsetNew == SHPLIB_NULLPTR || panFieldSizeNew == SHPLIB_NULLPTR ||
+        panFieldDecimalsNew == SHPLIB_NULLPTR || pachFieldTypeNew == SHPLIB_NULLPTR ||
+        pszHeaderNew == SHPLIB_NULLPTR )
+    {
+        free( panFieldOffsetNew );
+        free( panFieldSizeNew );
+        free( panFieldDecimalsNew );
+        free( pachFieldTypeNew );
+        free( pszHeaderNew );
+        return FALSE;
+    }
 
     /* shuffle fields definitions */
     for(i=0; i < psDBF->nFields; i++)

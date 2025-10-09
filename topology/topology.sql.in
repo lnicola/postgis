@@ -215,7 +215,8 @@ CREATE TABLE topology.topology (
   name VARCHAR NOT NULL UNIQUE,
   SRID INTEGER NOT NULL,
   precision FLOAT8 NOT NULL,
-  hasz BOOLEAN NOT NULL DEFAULT false
+  hasz BOOLEAN NOT NULL DEFAULT false,
+  useslargeids BOOLEAN NOT NULL DEFAULT false
 );
 
 --{ LayerTrigger()
@@ -241,7 +242,7 @@ BEGIN
     RAISE EXCEPTION 'The topology.layer table cannot be updated';
   END IF;
 
-  -- Check for existance of any feature column referencing
+  -- Check for existence of any feature column referencing
   -- this layer
   FOR rec IN SELECT * FROM pg_namespace n, pg_class c, pg_attribute a
     WHERE text(n.nspname) = OLD.schema_name
@@ -300,7 +301,7 @@ LANGUAGE 'plpgsql' VOLATILE STRICT;
 
 --{
 -- Layer table.
--- Stores topology layer informations
+-- Stores topology layer information
 --
 CREATE TABLE topology.layer (
   topology_id INTEGER NOT NULL
@@ -326,10 +327,11 @@ ON topology.layer FOR EACH ROW EXECUTE PROCEDURE topology.LayerTrigger();
 --
 -- Availability: 1.1.0
 --
+-- Replaces topogeometry(integer, integer, integer, integer) deprecated in 3.6.0
 CREATE TYPE topology.TopoGeometry AS (
   topology_id integer,
   layer_id integer,
-  id integer,
+  id bigint,
   type integer -- 1: [multi]point, 2: [multi]line,
                -- 3: [multi]polygon, 4: collection
 );
@@ -350,44 +352,35 @@ CREATE TYPE topology.TopoGeometry AS (
 -- element_type will be the child layer identifier and
 -- element_id will be composing TopoGeometry identifier
 --
-CREATE DOMAIN topology.TopoElement AS integer[]
+-- Availability: 3.6.0
+-- Replaces topoelement(integer[]) deprecated in 3.6.0
+CREATE DOMAIN topology.TopoElement AS bigint[]
+  -- Availability: 1.1.0
   CONSTRAINT DIMENSIONS CHECK (
     array_upper(VALUE, 2) IS NULL
     AND array_upper(VALUE, 1) = 2
-  );
-ALTER DOMAIN topology.TopoElement ADD
-        CONSTRAINT lower_dimension CHECK (
-    array_lower(VALUE, 1) = 1
-  );
-ALTER DOMAIN topology.TopoElement DROP CONSTRAINT
-  IF EXISTS
-  type_range;
-ALTER DOMAIN topology.TopoElement ADD
-        CONSTRAINT type_range CHECK (
+  )
+  -- Availability: 1.1.0
+  CONSTRAINT type_range CHECK (
     VALUE[2] > 0
+  )
+  -- Availability: 2.0.0
+  CONSTRAINT lower_dimension CHECK (
+    array_lower(VALUE, 1) = 1
   );
 
 --
 -- TopoElementArray domain
 --
--- Changed: 3.1.0 - get rid of IS NOT NULL check
-CREATE DOMAIN topology.TopoElementArray AS integer[][]
-  CONSTRAINT DIMENSIONS CHECK (
+-- Availability: 3.6.0
+-- Replaces topoelementarray(integer[][]) deprecated in 3.6.0
+CREATE DOMAIN topology.TopoElementArray AS bigint[][]
+  -- Availability: 3.1.0
+  CONSTRAINT type_range CHECK (
     array_upper(VALUE, 2) = 2
     AND array_upper(VALUE, 3) IS NULL
   );
 
--- Changed: 3.1.0
-ALTER DOMAIN topology.TopoElementArray DROP CONSTRAINT
-  IF EXISTS
-  DIMENSIONS;
-
--- Changed: 3.1.0 - get rid of IS NOT NULL check
-ALTER DOMAIN topology.TopoElementArray ADD
-        CONSTRAINT type_range CHECK (
-    array_upper(VALUE, 2) = 2
-    AND array_upper(VALUE, 3) IS NULL
-  );
 
 --{ RelationTrigger()
 --
@@ -541,7 +534,7 @@ LANGUAGE 'plpgsql' VOLATILE STRICT;
 --} RelationTrigger()
 
 --{
---  DropTopoGeometryColumn(schema, table, colum)
+--  DropTopoGeometryColumn(schema, table, column)
 --
 --  Drop a TopoGeometry column, unregister the associated layer,
 --  cleanup the relation table.
@@ -648,15 +641,15 @@ LANGUAGE 'plpgsql' VOLATILE;
 --
 --} DropTopoGeometryColumn
 
---{
--- CreateTopoGeom(topology_name, topogeom_type, layer_id, elements)
+--
+-- CreateTopoGeom(topology_name, topogeom_type, layer_id, elements, tg_id)
 --
 -- Create a TopoGeometry object from Topology elements.
 -- The elements parameter is a two-dimensional array.
 -- Every element of the array is either a Topology element represented by
 -- (id, type) or a TopoGeometry element represented by (id, layer).
 -- The actual semantic depends on the TopoGeometry layer, either at
--- level 0 (elements are topological primitives) or higer (elements
+-- level 0 (elements are topological primitives) or higher (elements
 -- are TopoGeoms from child layer).
 --
 -- @param toponame Topology name
@@ -671,11 +664,15 @@ LANGUAGE 'plpgsql' VOLATILE;
 --
 -- @param tg_objs Array of components
 --
+-- @param tg_id Topogeo ID.
+--
 -- Return a topology.TopoGeometry object.
 --
--- Availability: 1.1.0
+-- Availability: 3.6.0
 --
-CREATE OR REPLACE FUNCTION topology.CreateTopoGeom(toponame varchar, tg_type integer, layer_id integer, tg_objs topology.TopoElementArray)
+-- Changed: 3.6.0 uses bigint for ids
+-- Replaces createtopogeom(varchar, integer, integer, topoelementarray) deprecated in 3.6.0
+CREATE OR REPLACE FUNCTION topology.CreateTopoGeom(toponame varchar, tg_type integer, layer_id integer, tg_objs topology.TopoElementArray, tg_id bigint default 0)
   RETURNS topology.TopoGeometry
 AS
 $$
@@ -685,13 +682,19 @@ DECLARE
   outerdims varchar;
   innerdims varchar;
   obj_type integer;
-  obj_id integer;
+  obj_id bigint;
   ret topology.TopoGeometry;
   rec RECORD;
   layertype integer;
   layerlevel integer;
   layerchild integer;
+  cnt integer;
+  sql TEXT;
 BEGIN
+  -- Check for negative
+  IF tg_id < 0 THEN
+    RAISE EXCEPTION 'Invalid Topogeo ID % (must be > 0)', tg_id;
+  END IF;
 
   IF tg_type < 1 OR tg_type > 4 THEN
     RAISE EXCEPTION 'Invalid TopoGeometry type % (must be in the range 1..4)', tg_type;
@@ -744,6 +747,18 @@ BEGIN
     ret.id = rec.nextval;
   END LOOP;
 
+  IF tg_id > 0 THEN
+    IF tg_id > ret.id THEN
+      -- set sequence to match tg_id
+      EXECUTE 'SELECT setval(' ||
+        quote_literal(
+          quote_ident(toponame) || '.topogeo_s_' || layer_id) || ', ' || tg_id ||
+        ')' INTO STRICT ret.id;
+    END IF;
+
+    ret.id = tg_id;
+  END IF;
+
   -- Loop over outer dimension
   i = array_lower(tg_objs, 1);
   LOOP
@@ -792,9 +807,9 @@ BEGIN
 END
 $$
 LANGUAGE 'plpgsql' VOLATILE STRICT;
---} CreateTopoGeom(toponame,topogeom_type, layer_id, TopoElementArray)
+--} CreateTopoGeom(toponame,topogeom_type, layer_id, TopoElementArray, tg_id)
 
---{
+--
 -- CreateTopoGeom(topology_name, topogeom_type, layer_id) - creates the empty topogeom
 -- Availability: 1.1.0
 CREATE OR REPLACE FUNCTION topology.CreateTopoGeom(toponame varchar, tg_type integer, layer_id integer)
@@ -872,7 +887,9 @@ $$ LANGUAGE 'sql' STABLE STRICT;
 --
 -- Availability: 1.1.0
 --
-CREATE OR REPLACE FUNCTION topology.GetTopoGeomElementArray(toponame varchar, layer_id integer, tgid integer)
+-- Changed: 3.6.0 uses bigint for IDs
+-- Replaces gettopogeomelementarray(varchar, integer, integer) deprecated in 3.6.0
+CREATE OR REPLACE FUNCTION topology.GetTopoGeomElementArray(toponame varchar, layer_id integer, tgid bigint)
   RETURNS topology.TopoElementArray
 AS
 $$
@@ -935,7 +952,9 @@ LANGUAGE 'plpgsql' STABLE STRICT;
 --
 -- Returns a set of element_id,element_type
 --
-CREATE OR REPLACE FUNCTION topology.GetTopoGeomElements(toponame varchar, layerid integer, tgid integer)
+-- Changed: 3.6.0 uses bigint for IDs
+-- Replaces gettopogeomelements(varchar, integer, integer) deprecated in 3.6.0
+CREATE OR REPLACE FUNCTION topology.GetTopoGeomElements(toponame varchar, layerid integer, tgid bigint)
   RETURNS SETOF topology.TopoElement
 AS
 $$
@@ -995,7 +1014,7 @@ BEGIN
       END LOOP;
     ELSE
       ret = '{' || rec.element_id || ',' || rec.element_type || '}';
-      RETURN NEXT ret;
+      RETURN NEXT ret::int8[];
     END IF;
 
   END LOOP;
@@ -1237,24 +1256,25 @@ CREATE CAST (topology.TopoGeometry AS Geometry) WITH FUNCTION topology.Geometry(
 -- Construct a TopoElement from a TopoGeometry.
 --
 -- Availability: 3.4.0
--- }{
+-- Changed: 3.6.0
+-- Replaces topoelement(topogeometry) depecrated in 3.6.0
 CREATE OR REPLACE FUNCTION topology.TopoElement(topo topology.TopoGeometry)
     RETURNS topology.TopoElement
     LANGUAGE sql
     COST 1
     IMMUTABLE PARALLEL SAFE
-AS  $$SELECT ARRAY[topo.id,topo.layer_id]::topology.topoelement;$$;
+AS  $$SELECT ARRAY[topo.id::bigint,topo.layer_id::bigint]::topology.topoelement;$$;
 --} TopoElement(TopoGeometry)
 
 --{
--- TopoGeometry(int[])
+-- TopoGeometry(bigint[])
 --
 -- Cast a TopoGeometry to a TopoElement.
 --
--- Availability: 3.4.0
--- }{
-CREATE CAST (topology.TopoGeometry AS int[]) WITH FUNCTION topology.TopoElement(topology.TopoGeometry) AS ASSIGNMENT;
---} TopoGeometry(int[])
+-- Availability: 3.6.0
+--
+CREATE CAST (topology.TopoGeometry AS bigint[]) WITH FUNCTION topology.TopoElement(topology.TopoGeometry) AS ASSIGNMENT;
+--} TopoGeometry(bigint[])
 
 --{
 --  DropTopology(name)
@@ -1401,6 +1421,10 @@ LANGUAGE 'plpgsql' VOLATILE STRICT;
 #include "sql/manage/RenameTopology.sql.in"
 #include "sql/manage/ValidateTopology.sql.in"
 #include "sql/manage/ValidateTopologyRelation.sql.in"
+#include "sql/manage/ValidateTopologyPrecision.sql.in"
+#include "sql/manage/MakeTopologyPrecise.sql.in"
+#include "sql/manage/TotalTopologySize.sql.in"
+#include "sql/manage/UpgradeTopology.sql.in"
 
 -- Cleanup functions
 #include "sql/cleanup/RemoveUnusedPrimitives.sql.in"
@@ -1413,7 +1437,7 @@ CREATE OR REPLACE FUNCTION topology.postgis_topology_scripts_installed() RETURNS
 -- Make sure topology is in database search path --
 SELECT topology.AddToSearchPath('topology');
 
--- Make metadata tables publically visible
+-- Make metadata tables publicly visible
 -- See https://trac.osgeo.org/postgis/ticket/4575
 GRANT SELECT ON topology.topology TO PUBLIC;
 GRANT SELECT ON topology.layer TO PUBLIC;

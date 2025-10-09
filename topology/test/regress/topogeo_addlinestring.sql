@@ -58,6 +58,7 @@ $$ LANGUAGE 'plpgsql';
 SELECT 'invalid', TopoGeo_addLineString('city_data', 'SRID=4326;MULTILINESTRING((36 26, 38 30))');
 SELECT 'invalid', TopoGeo_addLineString('city_data', 'SRID=4326;POINT(36 26)');
 SELECT 'invalid', TopoGeo_addLineString('invalid', 'SRID=4326;LINESTRING(36 26, 0 0)');
+SELECT 'empty', TopoGeo_addLineString('city_data', 'SRID=4326;LINESTRING EMPTY');
 
 -- Isolated edge in universal face
 SELECT 'iso_uni', TopoGeo_addLineString('city_data', 'SRID=4326;LINESTRING(36 26, 38 30)');
@@ -514,3 +515,77 @@ SELECT 't5568', 'invalidities at start', array_agg((v)) FROM validatetopology('t
 SELECT NULL FROM topology.TopoGeo_addLinestring('t5568','01020000000200000084CBFA5C7A7824405CC705259CEE4D407A6873CA73782440DE38B01D9CEE4D40');
 SELECT 't5568', 'invalidities at end', array_agg(error) FROM validatetopology('t5568') v;
 ROLLBACK;
+
+
+
+-- See https://trac.osgeo.org/postgis/ticket/5782
+BEGIN;
+SELECT NULL FROM topology.CreateTopology ('t5782');
+SELECT NULL FROM topology.TopoGeo_addLinestring('t5782',
+'LINESTRING(
+18.006852310996862 69.0403992633497,
+18.00677727099686 69.0404005833497,
+18.006780950996863 69.04042744334969,
+18.00678831099686 69.0404811833497,
+18.00686335099686 69.04047986334969,
+18.006864423681307 69.04048768506776)'
+);
+SELECT NULL FROM topology.TopoGeo_addLinestring('t5782',
+'LINESTRING(18.006864423681307 69.04048768506776,
+18.00686335099686 69.04047986334969,
+18.00678831099686 69.0404811833497,
+18.00678463099686 69.0404543133497,
+18.00677727099686 69.0404005833497,
+18.006852310996862 69.0403992633497,
+18.00684863099686 69.04037239334968,
+18.00737395099686 69.04036317334969,
+18.00737333099686 69.0403586833497)'
+);
+SELECT '#5782', 'valid_before', * FROM topology.ValidateTopology('t5782');
+SELECT NULL FROM topology.TopoGeo_addLinestring('t5782',
+'LINESTRING(18.00737333099686 69.0403586833497,
+18.00721192099686 69.0403628733497,
+18.00705714099686 69.0403605633497,
+18.00689347099686 69.0403665833497,
+18.00667774099686 69.0403714433497,
+18.00653346099686 69.04039085334969,
+18.00647305099686 69.0403818633497,
+18.00657415099686 69.0404371833497,
+18.00668981099686 69.04048704334969,
+18.006691126034692 69.04048768506776)'
+);
+SELECT '#5782', 'valid_after', * FROM topology.ValidateTopology('t5782');
+ROLLBACK;
+
+-- See https://trac.osgeo.org/postgis/ticket/5993
+SELECT NULL FROM topology.CreateTopology ('t5993');
+SELECT NULL FROM topology.TopoGeo_addLinestring('t5993',
+'LINESTRING(0 2, 100 2)'
+);
+-- We expect this to succeed, as we added no new edges
+SELECT '#5993.0', 'existing-data', count(*) FROM topology.TopoGeo_addLinestring('t5993',
+  'LINESTRING(0 2,100 2)', max_edges => 0
+);
+-- This should fail because the existing edge is split
+-- creating a new edge while we limit to 0
+SELECT '#5993.1', 'single-split', count(*) FROM topology.TopoGeo_addLinestring('t5993',
+  'LINESTRING(0 2,80 2)', max_edges => 0
+);
+-- This should fail because the existing edge is split
+-- creating two new edge while we limit to 1
+SELECT '#5993.2', 'double-split-off-limit', count(*) FROM topology.TopoGeo_addLinestring('t5993',
+  'LINESTRING(10 2,80 2)', max_edges => 1
+);
+-- This should succeed because the existing edge is split
+-- creating two new edge while we limit to 1
+SELECT '#5993.3', 'double-split-in-limit', count(*) FROM topology.TopoGeo_addLinestring('t5993',
+  'LINESTRING(10 2,80 2)', max_edges => 2
+);
+-- This should fail because the existing edge is snap-split
+-- creating two new edge while we limit to 1
+SELECT '#5993.4', 'snap-split-off-limit', * FROM topology.TopoGeo_addLinestring('t5993',
+  ST_MakeLine(ST_MakePoint(5, 0), ST_MakePoint(5, 2 - 1e-20)),
+  max_edges => 1,
+  tolerance => 2
+);
+SELECT NULL FROM topology.DropTopology ('t5993');

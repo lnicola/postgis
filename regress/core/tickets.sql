@@ -908,7 +908,7 @@ SELECT '#3355',  ST_Intersects(
          'LINESTRING(124.983539 1.419224,91.181596 29.647798)'::geography
        , ST_Segmentize('LINESTRING(124.983539 1.419224,91.181596 29.647798)'::geography, 47487290)::geography);
 /** NOTE: change seems crazy but PG16s ordering of parenthesis is different from prior versions
-so to accomodate had to add and remove superfluous spaces **/
+so to accommodate had to add and remove superfluous spaces **/
 SELECT '#3356', ST_Summary(wkt::geometry) As wkt_geom,
    ST_Summary(wkt::geography) As wkt_geog,
    ST_Summary(wkt::geometry::geography) As geom_geog
@@ -1510,6 +1510,10 @@ SELECT '#5320', ST_SimplifyPreserveTopology('0106000020E864000001000000010300000
 DROP PROCEDURE IF EXISTS p_force_parellel_mode(text);
 SELECT '#5378', ST_SRID( ST_Buffer(ST_GeomFromText('POINT(-94 29.53)', 4269)::geography, 12)::geometry );
 
+SELECT '#5425', ST_AsText(ST_SnapToGrid(
+  ST_SnapToGrid('POINT(1.23456789 9.87654321)'::geometry, 0.001),
+  0.000001) );
+
 SELECT '#5627' AS ticket, bool_and(ST_Intersects(
     'MULTIPOINT(EMPTY,(-378 574))'::geometry,
     geom))
@@ -1555,3 +1559,67 @@ SELECT '#5677',
  );
 
 SELECT '#5686', ST_NumInteriorRings('TRIANGLE (( -71.0821 42.3036, -71.0821 42.3936, -71.0901 42.3036, -71.0821 42.3036))'::geometry);
+
+SELECT '#5747', ST_Length('MULTISURFACE (((0 0, 1 0, 1 1, 0 1, 0 0)), CURVEPOLYGON (CIRCULARSTRING (10 10, 11 11, 12 10, 11 9, 10 10)))'::geometry);
+
+-- #5855
+CREATE TEMP TABLE TEST (street text, extent geometry(Polygon,32633));
+INSERT INTO test VALUES ('Knosesmauet','0103000020797F0000010000000500000010B2468761BDDFC06390523AA1B0594110B2468761BDDFC030554D9BC3B0594107992AF50799DFC030554D9BC3B0594107992AF50799DFC06390523AA1B0594110B2468761BDDFC06390523AA1B05941');
+SET enable_seqscan=false;
+CREATE INDEX test_idx ON test USING GIST ( extent );
+
+SELECT '#5855', street
+FROM test
+WHERE ST_DFullyWithin(
+    ST_SetSRID(ST_GeomFromText('POINT(-32356 6734606)'), 32633),
+    extent,
+    1700
+);
+
+SELECT '#5876', ST_AsText(ST_AddPoint(
+		'LINESTRING (1 1, 2 2)'::geometry,
+		'POINT EMPTY'::geometry), 2);
+
+
+-- https://trac.osgeo.org/postgis/ticket/5082 st_linelocatepoint returns value over 1
+select '#5082', ST_LineLocatePoint(
+	'LINESTRING (614506.766313283 390577.5124384557, 614494.089082674 390574.5586551775, 614494.8569439995 390562.1301508558, 614493.5246928157 390549.7664042029, 614486.5713433414 390544.32637928444, 614487.6296766759 390492.9548792321, 614487.6296766759 390492.9548792321)'::geometry,
+	'POINT (614487.6296766759 390492.9548792321)'::geometry
+	) <= 1.0;
+
+
+-- -------------------------------------------------------------------------------------
+-- #5978, geometry_columns not showing right SRID and Type
+-- #5829, SELECT geometry_columns returns unexpected error
+CREATE TABLE test5829 (
+  geom geometry);
+ALTER TABLE test5829
+  ADD CONSTRAINT c1
+  CHECK (ST_SRID(geom)=4326 and ST_IsValid(geom));
+CREATE TABLE public.test5978 (
+  OBJECTID SERIAL NOT NULL,
+  PKEY     INTEGER,
+  PRIMARY KEY (OBJECTID));
+SELECT AddGeometryColumn('public', 'test5978', 'shape',  4326, upper('POINT'), 2, false);
+SELECT AddGeometryColumn('public', 'test5978', 'geometry',  4326, upper('POINT'), 2, true);
+SELECT f_table_schema, f_table_name, f_geometry_column, coord_dimension, srid, type
+ FROM geometry_columns WHERE f_table_name IN ('test5829', 'test5978')
+ ORDER BY f_table_name, f_geometry_column;
+DROP TABLE IF EXISTS test5829, test5978;
+
+-- -------------------------------------------------------------------------------------
+-- #5987, ST_GeometryN broken on unitary geoms
+CREATE TABLE test5987 (geom geometry(Geometry,4326));
+INSERT INTO test5987 VALUES('LINESTRING(20 20,20.1 20,20.2 19.9)'::geometry);
+SELECT '#5987', ST_AsText(geom), ST_AsText(ST_GeometryN(geom, 1)) FROM test5987;
+DROP TABLE IF EXISTS test5987;
+
+-- -------------------------------------------------------------------------------------
+-- #5962
+SELECT '#5962',
+    ST_AsText(ST_ClipByBox2D(
+        ST_GeomFromText('MULTIPOINT((1 1),(3 4),(5 4))'),
+        ST_MakeEnvelope(0, 0, 5, 5)), 2),
+    ST_AsText(ST_ClipByBox2D(
+        ST_GeomFromText('MULTIPOINT((1 1),(6 4),(5 4))'),
+        ST_MakeEnvelope(0, 0, 5, 5 )), 2);

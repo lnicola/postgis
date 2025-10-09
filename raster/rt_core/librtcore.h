@@ -68,7 +68,6 @@
 #endif
 #endif
 
-
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)    /* seems to work like Linux... */
 #if !defined(LINUX)
 #define LINUX
@@ -155,6 +154,7 @@ typedef struct rt_quantile_t* rt_quantile;
 typedef struct rt_valuecount_t* rt_valuecount;
 typedef struct rt_gdaldriver_t* rt_gdaldriver;
 typedef struct rt_reclassexpr_t* rt_reclassexpr;
+typedef struct rt_reclassmap_t* rt_reclassmap;
 
 typedef struct rt_iterator_t* rt_iterator;
 typedef struct rt_iterator_arg_t* rt_iterator_arg;
@@ -258,9 +258,9 @@ extern void rtdealloc(void* mem);
 /**
  * Wrappers used for reporting errors and info.
  **/
-void rterror(const char *fmt, ...);
-void rtinfo(const char *fmt, ...);
-void rtwarn(const char *fmt, ...);
+void rterror(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+void rtinfo(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+void rtwarn(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
 
 /**
  * Wrappers used for options
@@ -274,9 +274,9 @@ char* rtstrdup(const char *str);
 void * default_rt_allocator(size_t size);
 void * default_rt_reallocator(void * mem, size_t size);
 void default_rt_deallocator(void * mem);
-void default_rt_error_handler(const char * fmt, va_list ap);
-void default_rt_warning_handler(const char * fmt, va_list ap);
-void default_rt_info_handler(const char * fmt, va_list ap);
+void default_rt_error_handler(const char * fmt, va_list ap) __attribute__ ((format (printf, 1, 0)));
+void default_rt_warning_handler(const char * fmt, va_list ap) __attribute__ ((format (printf, 1, 0)));
+void default_rt_info_handler(const char * fmt, va_list ap) __attribute__ ((format (printf, 1, 0)));
 char * default_rt_options(const char* varname);
 
 /* Debugging macros */
@@ -434,6 +434,18 @@ rt_band rt_band_new_inline(
 	rt_pixtype pixtype,
 	uint32_t hasnodata, double nodataval,
 	uint8_t* data
+);
+
+/**
+ * Fill in the cells of a band with a starting value
+ * frequently used to init with nodata value
+ *
+ * @param band      : band to initialize
+ * @param initval   : value to initialize with
+ */
+void rt_band_init_value(
+	rt_band band,
+	double initval
 );
 
 /**
@@ -998,6 +1010,20 @@ rt_band rt_band_reclass(
 	rt_reclassexpr *exprset, int exprcount
 );
 
+/**
+ * Returns new band with values reclassified
+ * @param srcband : the band who's values will be reclassified
+ * @param map : the src and dst values to remapping
+ * @param hasnodata : indicates if the band has a nodata value
+ * @param nodataval : nodata value for the new band
+ *
+ * @return a new rt_band or NULL on error
+ */
+rt_band rt_band_reclass_exact(
+	rt_band srcband, rt_reclassmap map,
+	uint32_t hasnodata, double nodataval
+);
+
 /*- rt_raster --------------------------------------------------------*/
 
 /**
@@ -1328,7 +1354,7 @@ void rt_raster_get_geotransform_matrix(rt_raster raster,
  * Set raster's geotransform using 6-element array
  *
  * @param raster : the raster to set matrix of
- * @param gt : intput parameter, 6-element geotransform matrix
+ * @param gt : input parameter, 6-element geotransform matrix
  *
  */
 void rt_raster_set_geotransform_matrix(rt_raster raster,
@@ -2070,7 +2096,7 @@ rt_errorstate rt_raster_fully_within_distance(
 
 /*
  * Return ES_ERROR if error occurred in function.
- * Paramter aligned returns non-zero if two rasters are aligned
+ * Parameter aligned returns non-zero if two rasters are aligned
  *
  * @param rast1 : the first raster for alignment test
  * @param rast2 : the second raster for alignment test
@@ -2175,6 +2201,25 @@ rt_raster rt_raster_colormap(
 	rt_raster raster, int nband,
 	rt_colormap colormap
 );
+
+#if POSTGIS_GEOS_VERSION >= 31400
+/**
+ * Calculates the fraction of each raster cell that is covered by a given geometry.
+ *
+ * This function serves as a wrapper around the GEOSGridIntersectionFractions C-API function.
+ * It takes a PostGIS raster and a geometry, and returns a new single-band raster
+ * where each pixel's value is a float between 0.0 and 1.0, representing the
+ * fraction of that cell covered by the geometry.
+ *
+ * @param rast_in The input raster which defines the grid (dimensions and georeference).
+ * @param geom The input geometry to compute intersections with.
+ * @return A new single-band raster of pixel type PT_32BF on success, or NULL on failure.
+ */
+rt_raster rt_raster_intersection_fractions(
+	const rt_raster rast_in,
+	const LWGEOM *geom
+);
+#endif
 
 /*- utilities -------------------------------------------------------*/
 
@@ -2333,14 +2378,6 @@ rt_util_gdal_driver_registered(const char *drv);
 */
 GDALDatasetH
 rt_util_gdal_open(const char *fn, GDALAccess fn_access, int shared);
-
-
-/*
-    Callback for GDAL functions to hook into interrupt system
-*/
-int
-rt_util_gdal_progress_func(double dfComplete, const char *pszMessage, void *pProgressArg);
-
 
 void
 rt_util_from_ogr_envelope(
@@ -2589,6 +2626,20 @@ struct rt_reclassexpr_t {
 		int exc_min; /* exceed min */
 		int exc_max; /* exceed max */
 	} src, dst;
+};
+
+/* src/dst mapping for rt_classmap */
+struct rt_classpair_t {
+	double src;
+	double dst;
+};
+
+/* exact reclassification expression */
+struct rt_reclassmap_t {
+	uint32_t count;
+	rt_pixtype srctype;
+	rt_pixtype dsttype;
+	struct rt_classpair_t *pairs;
 };
 
 /* raster iterator */

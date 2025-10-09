@@ -293,7 +293,7 @@ Datum ST_Area(PG_FUNCTION_ARGS)
  *  	length2d(point) = 0
  *  	length2d(line) = length of line
  *  	length2d(polygon) = 0  -- could make sense to return sum(ring perimeter)
- *  	uses euclidian 2d length (even if input is 3d)
+ *  	uses euclidean 2d length (even if input is 3d)
  */
 PG_FUNCTION_INFO_V1(LWGEOM_length2d_linestring);
 Datum LWGEOM_length2d_linestring(PG_FUNCTION_ARGS)
@@ -311,7 +311,7 @@ Datum LWGEOM_length2d_linestring(PG_FUNCTION_ARGS)
  *  	length(point) = 0
  *  	length(line) = length of line
  *  	length(polygon) = 0  -- could make sense to return sum(ring perimeter)
- *  	uses euclidian 3d/2d length depending on input dimensions.
+ *  	uses euclidean 3d/2d length depending on input dimensions.
  */
 PG_FUNCTION_INFO_V1(LWGEOM_length_linestring);
 Datum LWGEOM_length_linestring(PG_FUNCTION_ARGS)
@@ -329,7 +329,7 @@ Datum LWGEOM_length_linestring(PG_FUNCTION_ARGS)
  *  	perimeter(point) = 0
  *  	perimeter(line) = 0
  *  	perimeter(polygon) = sum of ring perimeters
- *  	uses euclidian 3d/2d computation depending on input dimension.
+ *  	uses euclidean 3d/2d computation depending on input dimension.
  */
 PG_FUNCTION_INFO_V1(LWGEOM_perimeter_poly);
 Datum LWGEOM_perimeter_poly(PG_FUNCTION_ARGS)
@@ -348,7 +348,7 @@ Datum LWGEOM_perimeter_poly(PG_FUNCTION_ARGS)
  *  	perimeter(point) = 0
  *  	perimeter(line) = 0
  *  	perimeter(polygon) = sum of ring perimeters
- *  	uses euclidian 2d computation even if input is 3d
+ *  	uses euclidean 2d computation even if input is 3d
  */
 PG_FUNCTION_INFO_V1(LWGEOM_perimeter2d_poly);
 Datum LWGEOM_perimeter2d_poly(PG_FUNCTION_ARGS)
@@ -480,7 +480,7 @@ Datum LWGEOM_force_collection(PG_FUNCTION_ARGS)
 	/* deserialize into lwgeoms[0] */
 	lwgeom = lwgeom_from_gserialized(geom);
 
-	/* alread a multi*, just make it a collection */
+	/* already a multi*, just make it a collection */
 	if (lwgeom_is_collection(lwgeom))
 	{
 		lwgeom->type = COLLECTIONTYPE;
@@ -1467,8 +1467,10 @@ Datum LWGEOM_makeline_garray(PG_FUNCTION_ARGS)
 
 		geom = (GSERIALIZED *)DatumGetPointer(value);
 
-		if (gserialized_get_type(geom) != POINTTYPE && gserialized_get_type(geom) != LINETYPE &&
-		    gserialized_get_type(geom) != MULTIPOINTTYPE)
+		if (gserialized_get_type(geom) != POINTTYPE &&
+		    gserialized_get_type(geom) != MULTIPOINTTYPE &&
+		    gserialized_get_type(geom) != LINETYPE &&
+		    gserialized_get_type(geom) != MULTILINETYPE)
 		{
 			continue;
 		}
@@ -2143,9 +2145,11 @@ Datum ST_TileEnvelope(PG_FUNCTION_ARGS)
 	y1 = bbox.ymax - tileGeoSizeY * (y + 1 + margin);
 	y2 = bbox.ymax - tileGeoSizeY * (y - margin);
 
-	/* Clip y-axis to the given bounds */
+	/* Clip the final tile bounds to the bounds of the tile plane */
 	if (y1 < bbox.ymin) y1 = bbox.ymin;
 	if (y2 > bbox.ymax) y2 = bbox.ymax;
+	if (x1 < bbox.xmin) x1 = bbox.xmin;
+	if (x2 > bbox.xmax) x2 = bbox.xmax;
 
 	PG_RETURN_POINTER(
 		geometry_serialize(
@@ -2159,8 +2163,8 @@ PG_FUNCTION_INFO_V1(ST_IsCollection);
 Datum ST_IsCollection(PG_FUNCTION_ARGS)
 {
 	GSERIALIZED *geom = PG_GETARG_GSERIALIZED_HEADER(0);
-	LWGEOM *lwg = lwgeom_from_gserialized(geom);
-	PG_RETURN_BOOL(!lwgeom_is_unitary(lwg));
+	uint32_t lwtype = gserialized_get_type(geom);
+	PG_RETURN_BOOL(!lwtype_is_unitary(lwtype));
 }
 
 PG_FUNCTION_INFO_V1(LWGEOM_makepoint);
@@ -2290,6 +2294,11 @@ Datum LWGEOM_addpoint(PG_FUNCTION_ARGS)
 	{
 		elog(ERROR, "Second argument must be a POINT");
 		PG_RETURN_NULL();
+	}
+
+	if (gserialized_is_empty(pglwg2))
+	{
+		PG_RETURN_POINTER(pglwg1);
 	}
 
 	line = lwgeom_as_lwline(lwgeom_from_gserialized(pglwg1));

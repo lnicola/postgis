@@ -32,7 +32,6 @@
 #include "lwgeom_log.h"
 #include "liblwgeom.h"
 
-#if POSTGIS_PGSQL_VERSION < 180
 typedef enum					/* type categories for datum_to_json */
 {
 	JSONTYPE_NULL,				/* null, so we didn't bother to identify */
@@ -47,7 +46,6 @@ typedef enum					/* type categories for datum_to_json */
 	JSONTYPE_CAST,				/* something with an explicit cast to JSON */
 	JSONTYPE_OTHER				/* all else */
 } JsonTypeCategory;
-#endif
 
 static void array_dim_to_json(StringInfo result, int dim, int ndims, int *dims,
 				  Datum *vals, bool *nulls, int *valcount,
@@ -69,11 +67,9 @@ static void composite_to_json(Datum composite, StringInfo result,
 static void datum_to_json(Datum val, bool is_null, StringInfo result,
 						  JsonTypeCategory tcategory, Oid outfuncoid,
 						  bool key_scalar);
-#if POSTGIS_PGSQL_VERSION < 180
 static void json_categorize_type(Oid typoid,
 								 JsonTypeCategory *tcategory,
 								 Oid *outfuncoid);
-#endif
 static char * postgis_JsonEncodeDateTime(char *buf, Datum value, Oid typid);
 static int postgis_time2tm(TimeADT time, struct pg_tm *tm, fsec_t *fsec);
 static int postgis_timetz2tm(TimeTzADT *time, struct pg_tm *tm, fsec_t *fsec, int *tzp);
@@ -90,12 +86,12 @@ ST_AsGeoJsonRow(PG_FUNCTION_ARGS)
 {
 	Datum		array = PG_GETARG_DATUM(0);
 	text        *geom_column_text = PG_GETARG_TEXT_P(1);
+	char        *geom_column = PG_ARGISNULL(1) ? "" : text_to_cstring(geom_column_text);
 	int32       maxdecimaldigits = PG_GETARG_INT32(2);
 	bool		do_pretty = PG_GETARG_BOOL(3);
 	text        *id_column_text = PG_GETARG_TEXT_P(4);
-	StringInfo	result;
-	char        *geom_column = text_to_cstring(geom_column_text);
-	char        *id_column = text_to_cstring(id_column_text);
+	char        *id_column = PG_ARGISNULL(4) ? "" : text_to_cstring(id_column_text);
+	StringInfoData result;
 	Oid geom_oid = InvalidOid;
 	Oid geog_oid = InvalidOid;
 
@@ -109,11 +105,11 @@ ST_AsGeoJsonRow(PG_FUNCTION_ARGS)
 	if (strlen(id_column) == 0)
 		id_column = NULL;
 
-	result = makeStringInfo();
+	initStringInfo(&result);
 
-	composite_to_geojson(fcinfo, array, geom_column, id_column, maxdecimaldigits, result, do_pretty, geom_oid, geog_oid);
+	composite_to_geojson(fcinfo, array, geom_column, id_column, maxdecimaldigits, &result, do_pretty, geom_oid, geog_oid);
 
-	PG_RETURN_TEXT_P(cstring_to_text_with_len(result->data, result->len));
+	PG_RETURN_TEXT_P(cstring_to_text_with_len(result.data, result.len));
 }
 
 /*
@@ -283,7 +279,6 @@ composite_to_geojson(FunctionCallInfo fcinfo,
  * output function OID.  If the returned category is JSONTYPE_CAST, we
  * return the OID of the type->JSON cast function instead.
  */
-#if POSTGIS_PGSQL_VERSION < 180
 static void
 json_categorize_type(Oid typoid,
 					 JsonTypeCategory *tcategory,
@@ -376,7 +371,7 @@ json_categorize_type(Oid typoid,
 			break;
 	}
 }
-#endif
+
 /*
  * Turn a Datum into JSON text, appending the string to "result".
  *

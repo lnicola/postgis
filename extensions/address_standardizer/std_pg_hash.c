@@ -123,7 +123,7 @@ StdCacheDelete(void *ptr)
     she = GetStdHashEntry(context);
 
     if (!she)
-        elog(ERROR, "StdCacheDelete: Trying to delete non-existant hash entry object with MemoryContext key (%p)", (void *)context);
+        elog(ERROR, "StdCacheDelete: Trying to delete non-existent hash entry object with MemoryContext key (%p)", (void *)context);
 
     DBG("deleting std object (%p) with MemoryContext key (%p)", she->std, context);
 
@@ -251,8 +251,8 @@ GetStdFromPortalCache(StdPortalCache *STDCache,  char *lextab, char *gaztab, cha
     for (i=0; i<STD_CACHE_ITEMS; i++) {
         StdCacheItem *ci = &STDCache->StdCache[i];
         if (ci->lextab && !strcmp(ci->lextab, lextab) &&
-            ci->lextab && !strcmp(ci->gaztab, gaztab) &&
-            ci->lextab && !strcmp(ci->rultab, rultab))
+            ci->gaztab && !strcmp(ci->gaztab, gaztab) &&
+            ci->rultab && !strcmp(ci->rultab, rultab))
                 return STDCache->StdCache[i].std;
     }
 
