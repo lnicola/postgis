@@ -7020,9 +7020,38 @@ lwt_AddPoint(LWT_TOPOLOGY* topo, LWPOINT* point, double tol)
  *                    created due to splitting of existing edges.
  *
  */
+typedef struct _lwt_point_node_ref_t
+{
+  POINT2D pt;
+  LWT_ELEMID node_id;
+  int moved;
+} _lwt_point_node_ref;
+
+static int
+_lwt_FindPointNodeRef(const POINT2D *pt,
+                      const _lwt_point_node_ref *refs,
+                      uint64_t nrefs,
+                      uint64_t *refindex)
+{
+  uint64_t i;
+
+  for (i=0; i<nrefs; ++i)
+  {
+    if ( p2d_same(pt, &(refs[i].pt)) )
+    {
+      *refindex = i;
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
 static LWT_ELEMID
 _lwt_AddLineEdge( LWT_TOPOLOGY* topo, LWLINE* edge, double tol,
-                  int handleFaceSplit, int *forward, int *numNewEdges )
+                  int handleFaceSplit, int *forward, int *numNewEdges,
+                  const _lwt_point_node_ref *endpointNodes,
+                  uint64_t endpointNodeCount )
 {
   LWCOLLECTION *col;
   LWPOINT *start_point, *end_point;
@@ -7030,8 +7059,9 @@ _lwt_AddLineEdge( LWT_TOPOLOGY* topo, LWLINE* edge, double tol,
   LWT_ISO_NODE *node;
   LWT_ELEMID nid[2]; /* start_node, end_node */
   LWT_ELEMID id; /* edge id */
+  POINT2D p2d;
   POINT4D p4d;
-  uint64_t nn, i;
+  uint64_t nn, i, endpointRef;
   int moved=0, mm;
   int pointSplitEdges = -666;
 
@@ -7046,9 +7076,25 @@ _lwt_AddLineEdge( LWT_TOPOLOGY* topo, LWLINE* edge, double tol,
     lwnotice("Empty component of noded line");
     return 0; /* must be empty */
   }
-  nid[0] = _lwt_AddPoint( topo, start_point,
-                          _lwt_minTolerance(lwpoint_as_lwgeom(start_point)),
-                          handleFaceSplit, &mm, &pointSplitEdges );
+  if ( endpointNodes )
+  {
+    getPoint2d_p(start_point->point, 0, &p2d);
+    if ( ! _lwt_FindPointNodeRef(&p2d, endpointNodes, endpointNodeCount, &endpointRef) )
+    {
+      lwpoint_free(start_point);
+      lwerror("Internal error: endpoint lookup failed while adding line edge");
+      return -1;
+    }
+    nid[0] = endpointNodes[endpointRef].node_id;
+    mm = endpointNodes[endpointRef].moved;
+    pointSplitEdges = 0;
+  }
+  else
+  {
+    nid[0] = _lwt_AddPoint( topo, start_point,
+                            _lwt_minTolerance(lwpoint_as_lwgeom(start_point)),
+                            handleFaceSplit, &mm, &pointSplitEdges );
+  }
   lwpoint_free(start_point); /* too late if lwt_AddPoint calls lwerror */
   if ( nid[0] == -1 ) return -1; /* lwerror should have been called */
   if ( numNewEdges ) *numNewEdges += pointSplitEdges;
@@ -7063,9 +7109,25 @@ _lwt_AddLineEdge( LWT_TOPOLOGY* topo, LWLINE* edge, double tol,
             "after successfully getting first point !?");
     return -1;
   }
-  nid[1] = _lwt_AddPoint( topo, end_point,
-                          _lwt_minTolerance(lwpoint_as_lwgeom(end_point)),
-                          handleFaceSplit, &mm, &pointSplitEdges );
+  if ( endpointNodes )
+  {
+    getPoint2d_p(end_point->point, 0, &p2d);
+    if ( ! _lwt_FindPointNodeRef(&p2d, endpointNodes, endpointNodeCount, &endpointRef) )
+    {
+      lwpoint_free(end_point);
+      lwerror("Internal error: endpoint lookup failed while adding line edge");
+      return -1;
+    }
+    nid[1] = endpointNodes[endpointRef].node_id;
+    mm = endpointNodes[endpointRef].moved;
+    pointSplitEdges = 0;
+  }
+  else
+  {
+    nid[1] = _lwt_AddPoint( topo, end_point,
+                            _lwt_minTolerance(lwpoint_as_lwgeom(end_point)),
+                            handleFaceSplit, &mm, &pointSplitEdges );
+  }
   lwpoint_free(end_point); /* too late if lwt_AddPoint calls lwerror */
   if ( nid[1] == -1 ) return -1; /* lwerror should have been called */
   if ( numNewEdges ) *numNewEdges += pointSplitEdges;
@@ -7265,6 +7327,9 @@ _lwt_AddLine(LWT_TOPOLOGY* topo, LWLINE* line, double tol, int* nedges,
   LWT_ELEMID *ids;
   LWT_ISO_EDGE *edges;
   LWT_ISO_NODE *nodes;
+  _lwt_point_node_ref *endpointNodes = NULL;
+  uint64_t endpointNodeCount = 0;
+  uint64_t endpointNodeCap = 0;
   uint64_t num, numedges = 0, numnodes = 0;
   int num_new_edges = 0;
   uint64_t i;
@@ -7588,10 +7653,66 @@ _lwt_AddLine(LWT_TOPOLOGY* topo, LWLINE* line, double tol, int* nedges,
 
   LWDEBUGF(1, "Line was split into %d edges", ngeoms);
 
-  /* TODO: refactor to first add all nodes (re-snapping edges if
-   * needed) and then check all edges for existing already
-   * ( so to save a DB scan for each edge to be added )
-   */
+  for ( i=0; i<ngeoms; ++i )
+  {
+    uint32_t endpoint;
+    LWLINE *g = lwgeom_as_lwline(geoms[i]);
+
+    for (endpoint = 0; endpoint < 2; ++endpoint)
+    {
+      int moved = 0;
+      int pointSplitEdges = -666;
+      uint64_t endpointRef;
+      LWT_ELEMID nodeId;
+      POINT2D p2d;
+      LWPOINT *point = lwline_get_lwpoint(g, endpoint ? g->points->npoints-1 : 0);
+
+      if ( ! point )
+      {
+        lwgeom_free(noded);
+        if ( endpointNodes ) lwfree(endpointNodes);
+        return NULL;
+      }
+
+      getPoint2d_p(point->point, 0, &p2d);
+      if ( _lwt_FindPointNodeRef(&p2d, endpointNodes, endpointNodeCount, &endpointRef) )
+      {
+        lwpoint_free(point);
+        continue;
+      }
+
+      nodeId = _lwt_AddPoint( topo, point,
+                              _lwt_minTolerance(lwpoint_as_lwgeom(point)),
+                              handleFaceSplit, &moved, &pointSplitEdges );
+      lwpoint_free(point);
+      if ( nodeId == -1 )
+      {
+        lwgeom_free(noded);
+        if ( endpointNodes ) lwfree(endpointNodes);
+        return NULL;
+      }
+      num_new_edges += pointSplitEdges;
+
+      if ( maxNewEdges >= 0 && num_new_edges > maxNewEdges )
+      {
+        lwgeom_free(noded);
+        if ( endpointNodes ) lwfree(endpointNodes);
+        lwerror("Adding line to topology requires creating more edges than the requested limit of %d", maxNewEdges);
+        return NULL;
+      }
+
+      if ( endpointNodeCount == endpointNodeCap )
+      {
+        endpointNodeCap = endpointNodeCap ? endpointNodeCap * 2 : 16;
+        endpointNodes = lwrealloc(endpointNodes, endpointNodeCap * sizeof(*endpointNodes));
+      }
+      endpointNodes[endpointNodeCount].pt = p2d;
+      endpointNodes[endpointNodeCount].node_id = nodeId;
+      endpointNodes[endpointNodeCount].moved = moved;
+      ++endpointNodeCount;
+    }
+  }
+
   ids = lwalloc(sizeof(LWT_ELEMID)*ngeoms);
   num = 0;
   for ( i=0; i<ngeoms; ++i )
@@ -7611,7 +7732,9 @@ _lwt_AddLine(LWT_TOPOLOGY* topo, LWLINE* line, double tol, int* nedges,
 #endif
 
     forward = -1; /* will be set to either 0 or 1 if the edge already existed */
-    id = _lwt_AddLineEdge( topo, lwgeom_as_lwline(g), tol, handleFaceSplit, &forward, &edgeNewEdges );
+    id = _lwt_AddLineEdge( topo, lwgeom_as_lwline(g), tol, handleFaceSplit,
+                 &forward, &edgeNewEdges,
+                 endpointNodes, endpointNodeCount );
     num_new_edges += edgeNewEdges;
     /* if forward is still == -1 this was NOT an existing edge ? */
     if ( forward == -1 )
@@ -7625,6 +7748,7 @@ _lwt_AddLine(LWT_TOPOLOGY* topo, LWLINE* line, double tol, int* nedges,
     if ( id < 0 )
     {
       lwgeom_free(noded);
+      if ( endpointNodes ) lwfree(endpointNodes);
       lwfree(ids);
       return NULL;
     }
@@ -7632,6 +7756,7 @@ _lwt_AddLine(LWT_TOPOLOGY* topo, LWLINE* line, double tol, int* nedges,
     if ( maxNewEdges >= 0 && num_new_edges > maxNewEdges )
     {
       lwgeom_free(noded);
+      if ( endpointNodes ) lwfree(endpointNodes);
       lwfree(ids);
       lwerror("Adding line to topology requires creating more edges than the requested limit of %d", maxNewEdges);
       return NULL;
@@ -7650,6 +7775,7 @@ _lwt_AddLine(LWT_TOPOLOGY* topo, LWLINE* line, double tol, int* nedges,
 
   LWDEBUGG(2, noded, "Noded before free");
   lwgeom_free(noded);
+  if ( endpointNodes ) lwfree(endpointNodes);
 
   /* TODO: XXX remove duplicated ids if not done before */
 
